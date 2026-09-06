@@ -1,0 +1,16 @@
+# Restos del empaquetado
+build/
+dist/
+__pycache__/
+*.pyc
+*.spec
+
+# Datos de eventos reales: no deben salir del computador
+*.xlsx
+*.xlsm
+*.glf
+!plantilla.glf
+!ejemplo/*.xlsx
+
+# Preferencias locales
+preferencias.json

@@ -1,0 +1,10 @@
+# El formato .glf exige saltos de linea LF: si Git los convierte a CRLF al
+# descargar, la plantilla deja de servir. Se fija explicitamente.
+*.glf   text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+*.bat   text eol=crlf
+
+*.ico   binary
+*.png   binary
+*.xlsx  binary
