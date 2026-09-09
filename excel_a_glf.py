@@ -208,12 +208,23 @@ def contar_cabezas_mesa(hoja):
 
 
 def leer_plano_mesas(hoja, max_blancos=2):
-    """Lee el plano, sea cual sea su forma. Devuelve (entradas, capacidades).
+    """Lee el plano de una hoja de Excel."""
+    return leer_plano(
+        [[limpiar(c) for c in fila] for fila in hoja.iter_rows(values_only=True)],
+        max_blancos)
 
+
+def leer_plano(grid, max_blancos=2):
+    """Lee el plano de una rejilla de celdas ya limpias.
+
+    Va aparte de la hoja de Excel a proposito: una lista pegada como texto se
+    vuelve una rejilla de una sola columna y pasa por aqui igual, sin duplicar
+    nada de la logica de bloques, capacidades y cupos.
+
+    Devuelve (entradas, capacidades, mesas_repetidas).
     entradas: lista de dicts con mesa (int o None), nombre, cupos y ninos.
     capacidades: {mesa: puestos declarados}, sacado de "(9 PUESTOS)" o de "Total: 9".
     """
-    grid = [[limpiar(c) for c in fila] for fila in hoja.iter_rows(values_only=True)]
     entradas, capacidades = [], {}
     vistas, repetidas = set(), set()
 
@@ -288,6 +299,79 @@ def leer_plano_mesas(hoja, max_blancos=2):
                     'fila': k + 1,
                 })
     return entradas, capacidades, sorted(x for x in repetidas if x is not None)
+
+
+# --------------------------------------------------- listas pegadas en texto
+
+# Basura que traen las listas de WhatsApp y que no es parte del nombre.
+SELLO_WHATSAPP = re.compile(r'^\s*\[?\d{1,2}[/-]\d{1,2}[/-]\d{2,4},?\s*'
+                            r'\d{1,2}:\d{2}[^\]]*\]?\s*[^:]{0,40}:\s*', re.I)
+VINETA = re.compile(r'^\s*(\d{1,3}\s*[.)\-]|[-*•·●–—>+])\s*')
+CUPO_AL_FINAL = re.compile(r'\s*[-–—:=]\s*(\d{1,2})\s*$|\s*\bx\s*(\d{1,2})\s*$', re.I)
+
+
+def limpiar_linea(linea):
+    """Un renglon de texto pegado, sin la basura de alrededor.
+
+    Devuelve (nombre, cupos_declarados) donde cupos puede ser None.
+    """
+    t = limpiar(linea.replace('\t', '  '))
+    t = SELLO_WHATSAPP.sub('', t)      # "[12/05, 3:45 p.m.] Ana Gomez: ..."
+    t = VINETA.sub('', t)              # "1.", "1)", "-", "*", "•"
+
+    cupos = None
+    m = CUPO_AL_FINAL.search(t)
+    if m:
+        # Solo si delante queda un nombre de verdad; "Mesa 1 - 8" es un encabezado.
+        posible = t[:m.start()].strip()
+        if posible and not CABEZA_MESA.match(posible) and normalizar(posible):
+            cupos = int(m.group(1) or m.group(2))
+            t = posible
+    return t.strip(), cupos
+
+
+def leer_plano_texto(texto, max_blancos=2):
+    """Lee una lista pegada como texto. Devuelve lo mismo que leer_plano().
+
+    Si el texto trae encabezados de mesa se aprovechan igual que en el Excel; si
+    no, cada renglon es una entrada suelta sin mesa.
+    """
+    lineas, cupos_por_linea = [], {}
+    for cruda in texto.splitlines():
+        nombre, cupos = limpiar_linea(cruda)
+        if cupos is not None:
+            cupos_por_linea[len(lineas)] = cupos
+        lineas.append(nombre)
+
+    # Una sola columna: el lector de bloques del Excel sirve tal cual.
+    grid = [[l] for l in lineas]
+    entradas, capacidades, repetidas = leer_plano(grid, max_blancos)
+
+    if not entradas:
+        # Sin encabezados de mesa: cada renglon con nombre es un invitado.
+        for i, linea in enumerate(lineas):
+            if not linea or es_numero(linea) or CIERRA_BLOQUE.match(linea):
+                continue
+            gente = personas(linea)
+            if not gente:
+                continue
+            entre_parentesis = CUPO_ENTRE_PARENTESIS.search(linea)
+            entradas.append({
+                'mesa': None,
+                'nombre': linea,
+                'cupos': (cupos_por_linea.get(i)
+                          or (int(entre_parentesis.group(1)) if entre_parentesis else 0)
+                          or max(1, len(gente))),
+                'ninos': contar_ninos(linea),
+                'fila': i + 1,
+            })
+    else:
+        # Los cupos escritos al final del renglon ("Ana y Pedro - 2") mandan.
+        for e in entradas:
+            declarado = cupos_por_linea.get(e['fila'] - 1)
+            if declarado:
+                e['cupos'] = declarado
+    return entradas, capacidades, repetidas
 
 
 # ------------------------------------------------ emparejar nombres parecidos
@@ -473,52 +557,13 @@ def convertir(ruta_excel, hoja=None, hoja_mesas=None, agregar_sin_mesa=False,
     # --- plano de mesas (fuente principal)
     if nombre_mesas:
         entradas, capacidades, repetidas = leer_plano_mesas(libro[nombre_mesas])
-        if repetidas:
-            inf['avisos'].append(
-                'El plano trae el encabezado de la mesa %s mas de una vez. Junte todo '
-                'lo que aparece debajo de cada uno; revisa que no haya un bloque viejo '
-                'olvidado.' % ', '.join(str(x) for x in repetidas))
         if not entradas:
             raise ExcelNoEntendido(
                 'En la hoja "%s" no encontre ninguna mesa. Espero celdas que empiecen '
                 'por "Mesa 1", "MESA 1 (9 PUESTOS)" o "Mesa #1", con los invitados '
                 'escritos debajo en la misma columna.' % nombre_mesas)
-
-        pares, cubiertos = emparejar([personas(e['nombre']) for e in entradas],
-                                     [personas(f['nombre']) for f in lista])
-        invitados = [invitado_desde_plano(e, lista[pares[i]] if i in pares else {})
-                     for i, e in enumerate(entradas)]
-
-        inf['fuente'] = 'plano'
-        inf['n_mesas'] = len(set(e['mesa'] for e in entradas if e['mesa'] is not None))
-        inf['n_entradas_plano'] = len(entradas)
-        inf['personas_plano'] = sum(1 + g['acompanantes'] for g in invitados)
-        inf['sin_numero_de_mesa'] = [e['nombre'] for e in entradas if e['mesa'] is None]
-
-        contados = collections.Counter()
-        for e in entradas:
-            if e['mesa'] is not None:
-                contados[e['mesa']] += e['cupos']
-        inf['mesas_revisadas'] = len(capacidades)
-        inf['mesas_que_no_cuadran'] = [(m, capacidades[m], contados[m])
-                                       for m in sorted(capacidades)
-                                       if capacidades[m] != contados[m]]
-        if not capacidades:
-            inf['avisos'].append(
-                'El plano no declara cuantos puestos tiene cada mesa, asi que no pude '
-                'contrastar los cupos. Vale la pena revisar la lista a ojo.')
-
-        # El plano es lo ultimo que arman los novios, asi que manda sobre la hoja de
-        # contactos. Que alguien este en la lista y no en el plano suele querer decir
-        # que lo sacaron, no que le falta mesa: por eso no entra salvo que se pida.
-        pendientes = [f for i, f in enumerate(lista) if i not in cubiertos]
-        inf['sin_mesa'] = [(f['fila'], f['nombre']) for f in pendientes]
-        inf['sin_mesa_agregados'] = bool(pendientes) and agregar_sin_mesa
-        if inf['sin_mesa_agregados']:
-            for f in pendientes:
-                g = invitado_desde_lista(f, con_mesa=False)
-                g['notas'] = _notas([g['notas'], 'No esta en el plano de mesas'])
-                invitados.append(g)
+        invitados = armar_desde_plano(entradas, capacidades, repetidas, lista, inf,
+                                      agregar_sin_mesa)
     else:
         if not lista:
             raise ExcelNoEntendido(
@@ -528,6 +573,61 @@ def convertir(ruta_excel, hoja=None, hoja_mesas=None, agregar_sin_mesa=False,
         inf['fuente'] = 'lista'
         inf['avisos'].append('No encontre plano de mesas; use la hoja de la lista.')
 
+    return rematar(invitados, inf, amper_y)
+
+
+def armar_desde_plano(entradas, capacidades, repetidas, lista, inf, agregar_sin_mesa):
+    """Convierte las entradas del plano en invitados y llena el informe.
+
+    Lo usan por igual el Excel y el texto pegado, para que el resultado y las
+    comprobaciones sean exactamente los mismos vengan de donde vengan.
+    """
+    if repetidas:
+        inf['avisos'].append(
+            'El plano trae el encabezado de la mesa %s mas de una vez. Junte todo '
+            'lo que aparece debajo de cada uno; revisa que no haya un bloque viejo '
+            'olvidado.' % ', '.join(str(x) for x in repetidas))
+
+    pares, cubiertos = emparejar([personas(e['nombre']) for e in entradas],
+                                 [personas(f['nombre']) for f in lista])
+    invitados = [invitado_desde_plano(e, lista[pares[i]] if i in pares else {})
+                 for i, e in enumerate(entradas)]
+
+    inf['fuente'] = 'plano'
+    inf['n_mesas'] = len(set(e['mesa'] for e in entradas if e['mesa'] is not None))
+    inf['n_entradas_plano'] = len(entradas)
+    inf['personas_plano'] = sum(1 + g['acompanantes'] for g in invitados)
+    inf['sin_numero_de_mesa'] = [e['nombre'] for e in entradas if e['mesa'] is None]
+
+    contados = collections.Counter()
+    for e in entradas:
+        if e['mesa'] is not None:
+            contados[e['mesa']] += e['cupos']
+    inf['mesas_revisadas'] = len(capacidades)
+    inf['mesas_que_no_cuadran'] = [(m, capacidades[m], contados[m])
+                                   for m in sorted(capacidades)
+                                   if capacidades[m] != contados[m]]
+    if not capacidades and inf['n_mesas']:
+        inf['avisos'].append(
+            'El plano no declara cuantos puestos tiene cada mesa, asi que no pude '
+            'contrastar los cupos. Vale la pena revisar la lista a ojo.')
+
+    # El plano es lo ultimo que arman los novios, asi que manda sobre la hoja de
+    # contactos. Que alguien este en la lista y no en el plano suele querer decir
+    # que lo sacaron, no que le falta mesa: por eso no entra salvo que se pida.
+    pendientes = [f for i, f in enumerate(lista) if i not in cubiertos]
+    inf['sin_mesa'] = [(f['fila'], f['nombre']) for f in pendientes]
+    inf['sin_mesa_agregados'] = bool(pendientes) and agregar_sin_mesa
+    if inf['sin_mesa_agregados']:
+        for f in pendientes:
+            g = invitado_desde_lista(f, con_mesa=False)
+            g['notas'] = _notas([g['notas'], 'No esta en el plano de mesas'])
+            invitados.append(g)
+    return invitados
+
+
+def rematar(invitados, inf, amper_y=False):
+    """Los ultimos retoques y las cuentas finales del informe."""
     if amper_y:
         for g in invitados:
             g['nombre'] = re.sub(r'\s*&\s*', ' y ', g['nombre'])
@@ -539,8 +639,40 @@ def convertir(ruta_excel, hoja=None, hoja_mesas=None, agregar_sin_mesa=False,
     return invitados, inf
 
 
+def convertir_texto(texto, agregar_sin_mesa=False, amper_y=False):
+    """Convierte una lista pegada como texto, tipica de WhatsApp.
+
+    Devuelve lo mismo que convertir(): (invitados, informe).
+    """
+    entradas, capacidades, repetidas = leer_plano_texto(texto)
+    inf = {'archivo': 'Lista pegada como texto', 'hoja_lista': None,
+           'hoja_mesas': None, 'avisos': [], 'sin_mesa': [],
+           'mesas_que_no_cuadran': [], 'columnas': {}, 'verdes': 0, 'descartados': 0,
+           'descartados_por_color': collections.Counter(), 'filtro_color': False,
+           'es_texto': True,
+           'lineas': len([l for l in texto.splitlines() if l.strip()])}
+
+    if not entradas:
+        raise ExcelNoEntendido(
+            'No encontre ningun invitado en ese texto. Pega la lista con un nombre '
+            'por renglon; si trae mesas, deja los renglones "Mesa 1", "Mesa 2"... '
+            'con sus invitados debajo.')
+
+    invitados = armar_desde_plano(entradas, capacidades, repetidas, [], inf,
+                                  agregar_sin_mesa)
+    if not inf['n_mesas']:
+        inf['avisos'].append(
+            'El texto no traia mesas, asi que todos los invitados quedaron sin mesa. '
+            'Se las puedes poner despues en Guest List.')
+    return rematar(invitados, inf, amper_y)
+
+
 def resumen_fuente(inf):
     """Una frase que dice de donde salio la lista. Va arriba del resultado."""
+    if inf.get('es_texto'):
+        con_mesas = ('con sus mesas' if inf.get('n_mesas')
+                     else 'sin mesas: el texto no las traia')
+        return 'Lei %d renglones de la lista que pegaste, %s.' % (inf['lineas'], con_mesas)
     if inf['fuente'] == 'lista':
         return 'Sin plano de mesas: lei los invitados de la hoja "%s".' % inf['hoja_lista']
     if inf['hoja_lista']:
@@ -557,21 +689,28 @@ def hallazgos(inf):
     imprime en lineas.
     """
     H = []
+    # La lista puede venir de un Excel o de un texto pegado: el informe tiene que
+    # nombrar bien de donde salieron los puestos declarados.
+    origen = 'la lista' if inf.get('es_texto') else 'el Excel'
 
     if inf['fuente'] == 'plano':
         if inf['mesas_que_no_cuadran']:
             H.append({
                 'nivel': 'ojo',
-                'titulo': '%d mesa%s no cuadra%s con lo que dice el Excel'
+                'titulo': '%d mesa%s no cuadra%s con lo que dice %s'
                           % (len(inf['mesas_que_no_cuadran']),
                              '' if len(inf['mesas_que_no_cuadran']) == 1 else 's',
-                             '' if len(inf['mesas_que_no_cuadran']) == 1 else 'n'),
-                'detalle': ['Mesa %d: el Excel dice %d puestos, yo cuento %d personas'
+                             '' if len(inf['mesas_que_no_cuadran']) == 1 else 'n',
+                             origen),
+                'detalle': ['Mesa %d: dice %d puestos, yo cuento %d personas'
                             % (m, d, c) for m, d, c in inf['mesas_que_no_cuadran']]})
         elif inf['mesas_revisadas']:
+            n = inf['mesas_revisadas']
             H.append({'nivel': 'ok',
-                      'titulo': 'Las %d mesas cuadran con los puestos que declara el Excel'
-                                % inf['mesas_revisadas'],
+                      'titulo': ('La mesa cuadra con los puestos que declara %s' % origen
+                                 if n == 1 else
+                                 'Las %d mesas cuadran con los puestos que declara %s'
+                                 % (n, origen)),
                       'detalle': []})
 
         if inf['sin_mesa']:
@@ -591,7 +730,9 @@ def hallazgos(inf):
                               'probable es que ya no vayan.',
                               'Si alguno si va, marca la casilla de abajo y vuelve a leer.']})
 
-        if inf.get('sin_numero_de_mesa'):
+        # Si no hay mesas en absoluto no vale la pena listarlos a todos: eso ya lo
+        # dice el aviso de arriba.
+        if inf.get('sin_numero_de_mesa') and inf.get('n_mesas'):
             H.append({'nivel': 'info',
                       'titulo': '%d entrada%s de un bloque sin numero de mesa'
                                 % (len(inf['sin_numero_de_mesa']),
@@ -602,7 +743,9 @@ def hallazgos(inf):
     if inf['sin_telefono']:
         if len(inf['sin_telefono']) == inf['entradas']:
             H.append({'nivel': 'info', 'titulo': 'Nadie quedo con telefono',
-                      'detalle': ['Este Excel no trae una columna de telefonos.']})
+                      'detalle': ['Una lista pegada como texto no trae telefonos.'
+                                  if inf.get('es_texto') else
+                                  'Este Excel no trae una columna de telefonos.']})
         else:
             H.append({'nivel': 'info',
                       'titulo': '%d invitados sin telefono' % len(inf['sin_telefono']),

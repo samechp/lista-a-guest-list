@@ -18,9 +18,13 @@ No hay que instalar nada: ni Python, ni Excel, ni conexión a internet.
 > su PC"*. Sale porque el programa no está firmado digitalmente, no porque tenga algo
 > malo. Se toca **Más información** → **Ejecutar de todas formas**. Solo pasa la primera vez.
 
+El programa **avisa solo cuando hay una versión nueva**: sale un aviso arriba con un
+botón que lleva a la descarga. Si no hay internet no pasa nada, sigue funcionando igual.
+
 ## Cómo se usa
 
-1. **Elegir Excel…** y escoger el archivo del evento. La lista aparece sola.
+1. **Elegir Excel…** y escoger el archivo del evento. La lista aparece sola. Si la lista
+   llegó por WhatsApp en vez de en un Excel, **Pegar texto…** hace lo mismo.
 2. Revisar el **nombre del evento** — así se va a llamar dentro de Guest List — y, si se
    quiere, la fecha.
 3. Mirar las dos vistas: **Qué revisar** dice lo que vale la pena mirar (mesas que no
@@ -30,6 +34,28 @@ No hay que instalar nada: ni Python, ni Excel, ni conexión a internet.
    se toca el archivo → *Compartir* → **Guest List**.
 
 También se puede arrastrar el Excel encima del programa para abrirlo directamente.
+
+## Cuando la lista llega por WhatsApp
+
+A veces no hay Excel: mandan la lista escrita en un mensaje. Para eso está
+**Pegar texto…** — se pega tal cual y el programa la limpia.
+
+![La ventana de pegar texto](docs/pegar-texto.png)
+
+Aguanta lo que la gente escribe de verdad:
+
+| Lo que llega | Qué hace |
+|---|---|
+| `1. Ana Gómez y Pedro Ruiz` | Quita la numeración; cuenta 2 personas |
+| `- Carlos Soto` · `• Luisa Parra` | Quita viñetas |
+| `[12/05, 3:45 p. m.] Adri: Ana Gómez` | Quita el sello de WhatsApp |
+| `Familia Salas - 5` · `Los Medina x4` | Toma el número del final como los cupos |
+| `Familia Guzmán (4)` | Igual, entre paréntesis |
+| `Mesa 1 (8 puestos)` y debajo los nombres | Asigna la mesa y comprueba que cuadre |
+
+Si el texto no trae mesas, todos los invitados entran sin mesa y se las puede poner
+después en Guest List. Todo lo demás —contar personas, niños, comprobar los cupos contra
+lo que declara cada mesa— funciona igual que con un Excel.
 
 El programa viene en modo oscuro; el interruptor de arriba a la derecha lo cambia, y
 recuerda la elección y el tamaño de la ventana para la próxima vez.
@@ -113,9 +139,12 @@ Por el encabezado, sin importar el orden ni las mayúsculas:
 
 ## No usa inteligencia artificial
 
-Son reglas fijas: buscar patrones, partir texto, sumar y comparar. No se conecta a
-internet, no consulta ningún modelo y no aprende. **El mismo Excel siempre da el mismo
-resultado**, y los datos de los invitados nunca salen del computador.
+Son reglas fijas: buscar patrones, partir texto, sumar y comparar. No consulta ningún
+modelo y no aprende. **El mismo Excel siempre da el mismo resultado.**
+
+**Los datos de los invitados nunca salen del computador.** Lo único que el programa manda
+a internet es una pregunta a GitHub —"¿cuál es la última versión publicada?"— para avisar
+si hay una nueva. Nada más, y si no hay red simplemente no pregunta.
 
 Lo más parecido a algo "listo" es el cruce de nombres entre hojas, que usa
 [`difflib`](https://docs.python.org/3/library/difflib.html) para medir qué tanto se
@@ -163,6 +192,7 @@ python excel_a_glf.py "Lista de Invitados.xlsx" --evento "NOMBRE DEL EVENTO" --f
 | `plantilla.glf` | Un `.glf` vacío, exportado por la app, del que sale la cabecera. |
 | `plantilla_incrustada.py` | Esa cabecera y ese pie, incrustados. **Generado, no editar.** |
 | `generar_plantilla.py` | Regenera lo anterior desde `plantilla.glf`. |
+| `actualizacion.py` | Avisa si hay una versión nueva publicada en GitHub. |
 | `construir_exe.py` | Empaqueta todo en el `.exe`. |
 | `Convertir.bat` | Arrastrar y soltar, para quien tenga Python instalado. |
 

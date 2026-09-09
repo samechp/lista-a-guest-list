@@ -124,8 +124,11 @@ class Boton(tk.Canvas):
     def configure(self, **kw):
         """Acepta state='normal'/'disabled' como cualquier boton de Tk."""
         if 'state' in kw:
-            self._estado = kw.pop('state')
-            self.configure(cursor='hand2' if self._estado == 'normal' else 'arrow')
+            self._estado = kw['state']
+            # Se le pasa tambien al Canvas para que cget('state') diga la verdad.
+            super().configure(state=self._estado,
+                              cursor='hand2' if self._estado == 'normal' else 'arrow')
+            kw.pop('state')
             self._pintar()
         if 'text' in kw:
             self.texto = kw.pop('text')

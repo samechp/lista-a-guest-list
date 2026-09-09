@@ -12,6 +12,7 @@ Las piezas redondeadas estan en interfaz.py y los colores en tema.py.
 import os
 import sys
 import queue
+import webbrowser
 import threading
 import traceback
 import subprocess
@@ -23,6 +24,7 @@ import openpyxl
 
 import glf
 import icono
+import actualizacion
 import excel_a_glf as conv
 import tema
 from tema import C
@@ -38,6 +40,11 @@ F_ETIQUETA = ('Segoe UI Semibold', 10)
 F_TEXTO    = ('Segoe UI', 10)
 F_CHICO    = ('Segoe UI', 9)
 F_NUMERO   = ('Segoe UI Semibold', 26)
+
+# Lo que se sepa de la version nueva se guarda aqui: None = todavia no se pregunto,
+# False = se pregunto y no hay, dict = hay una. Asi rearmar la ventana al cambiar de
+# tema no dispara otra consulta a internet.
+_VERSION_NUEVA = None
 
 
 def abrir_carpeta(ruta):
@@ -99,6 +106,93 @@ class Hallazgo(Tarjeta):
             self.flecha.configure(text='ver  ▾')
 
 
+class VentanaTexto(tk.Toplevel):
+    """Para las listas que llegan por WhatsApp: se pegan y ya.
+
+    Devuelve el texto en `resultado`, o None si se cancela.
+    """
+
+    EJEMPLO = ('Pega aqui la lista tal como te la mandaron.\n\n'
+               'Un invitado por renglon. Sirve con vinetas, numeracion o sellos de\n'
+               'WhatsApp; todo eso se limpia solo.\n\n'
+               'Si trae mesas, deja los renglones "Mesa 1", "Mesa 2"... con sus\n'
+               'invitados debajo. Y si un renglon son varias personas, se puede\n'
+               'escribir el numero al final: "Familia Salas - 5".')
+
+    def __init__(self, padre, texto_previo=''):
+        super().__init__(padre, bg=C['fondo'])
+        self.resultado = None
+        self.title('Pegar la lista de invitados')
+        self.configure(padx=18, pady=18)
+        self.transient(padre)
+
+        tk.Label(self, text='Pega la lista de invitados', bg=C['fondo'], fg=C['texto'],
+                 font=('Segoe UI Semibold', 13)).pack(anchor='w')
+        self.lbl_ayuda = tk.Label(self, bg=C['fondo'], fg=C['suave'], font=F_CHICO,
+                                  justify='left', anchor='w',
+                                  text='Un invitado por renglon. Las vinetas, la numeracion '
+                                       'y los sellos de WhatsApp se limpian solos.')
+        self.lbl_ayuda.pack(anchor='w', pady=(3, 10))
+
+        caja = Tarjeta(self, radio=12, relleno=C['campo'])
+        caja.pack(fill='both', expand=True)
+        self.texto = tk.Text(caja.cuerpo, wrap='word', height=18, width=68,
+                             bg=C['campo'], fg=C['texto'], insertbackground=C['texto'],
+                             relief='flat', bd=0, highlightthickness=0,
+                             font=('Segoe UI', 10), padx=10, pady=8)
+        self.texto.pack(fill='both', expand=True)
+
+        if texto_previo:
+            self.texto.insert('1.0', texto_previo)
+        else:
+            self._poner_ejemplo()
+            self.texto.bind('<FocusIn>', self._quitar_ejemplo)
+            self.texto.bind('<Button-1>', self._quitar_ejemplo)
+
+        pie = tk.Frame(self, bg=C['fondo'])
+        pie.pack(fill='x', pady=(12, 0))
+        Boton(pie, 'Usar esta lista', self._aceptar).pack(side='left')
+        Boton(pie, 'Cancelar', self.destroy, tipo='suave').pack(side='left', padx=(10, 0))
+        self.lbl_cuenta = tk.Label(pie, text='', bg=C['fondo'], fg=C['suave'], font=F_CHICO)
+        self.lbl_cuenta.pack(side='left', padx=14)
+        self.texto.bind('<KeyRelease>', self._contar)
+
+        self.bind('<Escape>', lambda e: self.destroy())
+        self.texto.focus_set()
+        self.grab_set()
+
+    # El texto gris de ejemplo se borra al primer clic, como cualquier campo.
+    def _poner_ejemplo(self):
+        self.ejemplo_puesto = True
+        self.texto.insert('1.0', self.EJEMPLO)
+        self.texto.configure(fg=C['suave'])
+
+    def _quitar_ejemplo(self, _=None):
+        if getattr(self, 'ejemplo_puesto', False):
+            self.ejemplo_puesto = False
+            self.texto.delete('1.0', 'end')
+            self.texto.configure(fg=C['texto'])
+
+    def _contenido(self):
+        if getattr(self, 'ejemplo_puesto', False):
+            return ''
+        return self.texto.get('1.0', 'end').strip()
+
+    def _contar(self, _=None):
+        n = len([l for l in self._contenido().splitlines() if l.strip()])
+        self.lbl_cuenta.configure(text='%d renglones' % n if n else '')
+
+    def _aceptar(self):
+        contenido = self._contenido()
+        if not contenido:
+            messagebox.showwarning('Falta la lista',
+                                   'Pega la lista de invitados antes de continuar.',
+                                   parent=self)
+            return
+        self.resultado = contenido
+        self.destroy()
+
+
 class Aplicacion(tk.Frame):
 
     def __init__(self, raiz):
@@ -106,15 +200,18 @@ class Aplicacion(tk.Frame):
         self.raiz = raiz
         self.pack(fill='both', expand=True)
 
+        self.texto_pegado = None
         self.excel = None
         self.invitados = None
         self.informe = None
         self.cola = queue.Queue()
+        self.cola_version = queue.Queue()
         self.ocupado = False
         self.hojas_visibles = False
 
         self._estilos()
         self._construir()
+        self.buscar_actualizacion()
 
     # ------------------------------------------------------------- apariencia
 
@@ -168,11 +265,16 @@ class Aplicacion(tk.Frame):
         tk.Label(titulos, bg=C['fondo'], fg=C['suave'], font=F_SUB, anchor='w',
                  text='Elige el Excel del evento y la lista se arma sola.').pack(
                      anchor='w', pady=(3, 0))
+        derecha = tk.Frame(cab, bg=C['fondo'])
+        derecha.grid(row=0, column=1, sticky='ne')
         self.lbl_tema = tk.Label(
-            cab, bg=C['fondo'], fg=C['suave'], font=F_CHICO, cursor='hand2',
+            derecha, bg=C['fondo'], fg=C['suave'], font=F_CHICO, cursor='hand2',
             text='☀  Modo claro' if C['nombre'] == 'oscuro' else '☾  Modo oscuro')
-        self.lbl_tema.grid(row=0, column=1, sticky='ne')
-        self.lbl_tema.bind('<Button-1>', lambda e: self.cambiar_tema())
+        self.lbl_tema.pack(anchor='e')
+        tk.Label(derecha, text='version %s' % actualizacion.VERSION, bg=C['fondo'],
+                 fg=C['suave'], font=('Segoe UI', 8)).pack(anchor='e', pady=(2, 0))
+        # Aviso de version nueva: se arma solo si la hay, debajo del titulo.
+        self.cab = cab
 
         # ---- archivo
         caja = Tarjeta(self)
@@ -180,8 +282,12 @@ class Aplicacion(tk.Frame):
         fila1 = caja.cuerpo
         fila1.columnconfigure(1, weight=1)
 
-        Boton(fila1, 'Elegir Excel…', self.elegir_excel, tipo='suave',
-              fondo=C['tarjeta']).grid(row=0, column=0, sticky='w', padx=(8, 0), pady=8)
+        botones = tk.Frame(fila1, bg=C['tarjeta'])
+        botones.grid(row=0, column=0, sticky='w', padx=(8, 0), pady=8)
+        Boton(botones, 'Elegir Excel…', self.elegir_excel, tipo='suave',
+              fondo=C['tarjeta']).pack(side='left')
+        Boton(botones, 'Pegar texto…', self.pegar_texto, tipo='suave',
+              fondo=C['tarjeta']).pack(side='left', padx=(8, 0))
         info = tk.Frame(fila1, bg=C['tarjeta'])
         info.grid(row=0, column=1, sticky='ew', padx=14)
         self.lbl_archivo = tk.Label(info, text='Ningun archivo elegido', bg=C['tarjeta'],
@@ -355,11 +461,65 @@ class Aplicacion(tk.Frame):
             self.vista_revisar.grid_remove()
             self.vista_tabla.grid()
 
+    # ------------------------------------------------------------ version nueva
+
+    def buscar_actualizacion(self):
+        """Pregunta a GitHub si hay una version mas nueva, sin estorbar.
+
+        Se hace en otro hilo y el resultado se guarda en el modulo, para no volver
+        a preguntar cada vez que se rearma la ventana al cambiar de tema. Si no hay
+        internet no pasa nada: la respuesta es None y no se muestra nada.
+        """
+        global _VERSION_NUEVA
+        if _VERSION_NUEVA is False:          # ya se pregunto y no habia
+            return
+        if _VERSION_NUEVA:                   # ya se sabe cual es: solo repintarla
+            self._pintar_aviso_version(_VERSION_NUEVA)
+            return
+        threading.Thread(target=self._preguntar_version, daemon=True).start()
+        self.after(1200, self._revisar_version)
+
+    def _preguntar_version(self):
+        self.cola_version.put(actualizacion.buscar() or False)
+
+    def _revisar_version(self):
+        global _VERSION_NUEVA
+        try:
+            nueva = self.cola_version.get_nowait()
+        except queue.Empty:
+            try:
+                self.after(900, self._revisar_version)
+            except tk.TclError:
+                pass                          # la ventana se rearmo; no pasa nada
+            return
+        _VERSION_NUEVA = nueva
+        if nueva:
+            self._pintar_aviso_version(nueva)
+
+    def _pintar_aviso_version(self, nueva):
+        try:
+            aviso = Tarjeta(self.cab, radio=12, relleno=C['gris'], borde=C['azul'],
+                            fondo=C['fondo'], inset=6)
+            aviso.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(12, 0))
+            cuerpo = aviso.cuerpo
+            cuerpo.columnconfigure(0, weight=1)
+            tk.Label(cuerpo, bg=C['gris'], fg=C['texto'], font=F_ETIQUETA, anchor='w',
+                     text='Hay una version nueva: %s' % nueva['version']).grid(
+                         row=0, column=0, sticky='w', padx=10, pady=8)
+            tk.Label(cuerpo, bg=C['gris'], fg=C['suave'], font=F_CHICO, anchor='w',
+                     text='Tienes la %s.' % actualizacion.VERSION).grid(
+                         row=0, column=1, sticky='e', padx=(0, 10))
+            Boton(cuerpo, 'Descargar', lambda: webbrowser.open(nueva['url']),
+                  fondo=C['gris']).grid(row=0, column=2, sticky='e', padx=(0, 6), pady=5)
+        except tk.TclError:
+            pass
+
     # -------------------------------------------------------------------- tema
 
     def _estado(self):
         """Lo que hay escrito en la ventana, para no perderlo al cambiar de tema."""
-        return {'excel': self.excel, 'evento': self.var_evento.get(),
+        return {'excel': self.excel, 'texto': self.texto_pegado,
+                'evento': self.var_evento.get(),
                 'fecha': self.var_fecha.get(), 'hora': self.var_hora.get(),
                 'mesas': self.cbo_mesas.get(), 'lista': self.cbo_lista.get(),
                 'hojas': list(self.cbo_mesas['values']),
@@ -375,6 +535,9 @@ class Aplicacion(tk.Frame):
         self.var_y.set(e['y'])
         if e['hojas_visibles']:
             self._alternar_hojas()
+        if e.get('texto'):
+            self.cargar_texto(e['texto'])
+            return
         if not e['excel']:
             return
         self.excel = e['excel']
@@ -417,7 +580,9 @@ class Aplicacion(tk.Frame):
             return
 
         self.excel = ruta
+        self.texto_pegado = None
         self.lbl_archivo.configure(text=os.path.basename(ruta), fg=C['texto'])
+        self.lbl_cambiar.grid()
         for combo, valor in ((self.cbo_mesas, mesas), (self.cbo_lista, lista)):
             combo.configure(state='readonly', values=[SIN_HOJA] + hojas)
             combo.set(valor or SIN_HOJA)
@@ -425,27 +590,53 @@ class Aplicacion(tk.Frame):
             self.var_evento.set(os.path.splitext(os.path.basename(ruta))[0].strip().upper())
         self.convertir()
 
+    def pegar_texto(self):
+        """Para las listas que llegan por WhatsApp en vez de en un Excel."""
+        ventana = VentanaTexto(self.raiz, self.texto_pegado or '')
+        self.raiz.wait_window(ventana)
+        if ventana.resultado:
+            self.cargar_texto(ventana.resultado)
+
+    def cargar_texto(self, texto):
+        self.texto_pegado = texto
+        self.excel = None
+        n = len([l for l in texto.splitlines() if l.strip()])
+        self.lbl_archivo.configure(text='Lista pegada (%d renglones)' % n, fg=C['texto'])
+        if self.hojas_visibles:          # las hojas no aplican a una lista de texto
+            self._alternar_hojas()
+        self.lbl_cambiar.grid_remove()
+        self.convertir()
+
     def convertir(self):
-        if not self.excel or self.ocupado:
+        if self.ocupado or not (self.excel or self.texto_pegado):
             return
         self.ocupado = True
         self.btn_guardar.configure(state='disabled')
         self.lbl_estado.configure(text='')
-        self._vaciar('Leyendo el Excel…')
 
-        args = dict(hoja=self.cbo_lista.get() or SIN_HOJA,
-                    hoja_mesas=self.cbo_mesas.get() or SIN_HOJA,
-                    agregar_sin_mesa=self.var_sin_mesa.get(),
-                    todos=self.var_todos.get(),
-                    amper_y=self.var_y.get())
-        threading.Thread(target=self._trabajar, args=(self.excel, args), daemon=True).start()
+        if self.texto_pegado:
+            self._vaciar('Leyendo la lista…')
+            args = dict(agregar_sin_mesa=self.var_sin_mesa.get(),
+                        amper_y=self.var_y.get())
+            tarea = ('texto', self.texto_pegado, args)
+        else:
+            self._vaciar('Leyendo el Excel…')
+            args = dict(hoja=self.cbo_lista.get() or SIN_HOJA,
+                        hoja_mesas=self.cbo_mesas.get() or SIN_HOJA,
+                        agregar_sin_mesa=self.var_sin_mesa.get(),
+                        todos=self.var_todos.get(),
+                        amper_y=self.var_y.get())
+            tarea = ('excel', self.excel, args)
+
+        threading.Thread(target=self._trabajar, args=tarea, daemon=True).start()
         self.after(80, self._revisar_cola)
 
-    def _trabajar(self, ruta, args):
+    def _trabajar(self, clase, fuente, args):
         # BaseException, no Exception: si algo lanza SystemExit el hilo moriria en
         # silencio y la ventana se quedaria esperando para siempre.
         try:
-            self.cola.put(('ok', conv.convertir(ruta, **args)))
+            hacer = conv.convertir_texto if clase == 'texto' else conv.convertir
+            self.cola.put(('ok', hacer(fuente, **args)))
         except BaseException as e:
             self.cola.put(('error', (e, traceback.format_exc())))
 
@@ -463,11 +654,11 @@ class Aplicacion(tk.Frame):
             self.invitados = None
             self._vaciar(str(e) if entendible else
                          'Ocurrio un error inesperado.\n\n%s' % rastro)
-            self.lbl_fuente.configure(text='No pude leer este archivo.')
+            self.lbl_fuente.configure(text='No pude leer esta lista.')
             for c in self.cifras.values():
                 c.configure(text='—')
             if entendible:
-                messagebox.showerror('No pude leer este archivo', str(e))
+                messagebox.showerror('No pude leer esta lista', str(e))
             return
 
         self.invitados, self.informe = carga
@@ -528,12 +719,17 @@ class Aplicacion(tk.Frame):
     def guardar(self):
         if not self.invitados:
             return
-        evento = (self.var_evento.get().strip()
-                  or os.path.splitext(os.path.basename(self.excel))[0])
+        # Con una lista pegada no hay archivo de origen: se guarda en el Escritorio.
+        por_defecto = (os.path.splitext(os.path.basename(self.excel))[0]
+                       if self.excel else 'LISTA DE INVITADOS')
+        carpeta = (os.path.dirname(self.excel) if self.excel
+                   else os.path.join(os.path.expanduser('~'), 'Desktop'))
+        if not os.path.isdir(carpeta):
+            carpeta = os.path.expanduser('~')
         ruta = filedialog.asksaveasfilename(
             title='Guardar el archivo para Guest List',
-            initialfile=evento + '.glf', defaultextension='.glf',
-            initialdir=os.path.dirname(self.excel),
+            initialfile=(self.var_evento.get().strip() or por_defecto) + '.glf',
+            defaultextension='.glf', initialdir=carpeta,
             filetypes=[('Archivo de Guest List', '*.glf')])
         if not ruta:
             return
