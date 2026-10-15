@@ -192,7 +192,7 @@ python excel_a_glf.py "Lista de Invitados.xlsx" --evento "NOMBRE DEL EVENTO" --f
 | `plantilla.glf` | Un `.glf` vacío, exportado por la app, del que sale la cabecera. |
 | `plantilla_incrustada.py` | Esa cabecera y ese pie, incrustados. **Generado, no editar.** |
 | `generar_plantilla.py` | Regenera lo anterior desde `plantilla.glf`. |
-| `actualizacion.py` | Avisa si hay una versión nueva publicada en GitHub. |
+| `actualizacion.py` | Avisa si hay una versión nueva publicada en GitHub, la baja y se reemplaza sola. |
 | `construir_exe.py` | Empaqueta todo en el `.exe`. |
 | `Convertir.bat` | Arrastrar y soltar, para quien tenga Python instalado. |
 

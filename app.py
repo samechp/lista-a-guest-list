@@ -506,13 +506,68 @@ class Aplicacion(tk.Frame):
             tk.Label(cuerpo, bg=C['gris'], fg=C['texto'], font=F_ETIQUETA, anchor='w',
                      text='Hay una version nueva: %s' % nueva['version']).grid(
                          row=0, column=0, sticky='w', padx=10, pady=8)
-            tk.Label(cuerpo, bg=C['gris'], fg=C['suave'], font=F_CHICO, anchor='w',
-                     text='Tienes la %s.' % actualizacion.VERSION).grid(
-                         row=0, column=1, sticky='e', padx=(0, 10))
-            Boton(cuerpo, 'Descargar', lambda: webbrowser.open(nueva['url']),
-                  fondo=C['gris']).grid(row=0, column=2, sticky='e', padx=(0, 6), pady=5)
+            self.lbl_version = tk.Label(cuerpo, bg=C['gris'], fg=C['suave'], font=F_CHICO,
+                                        anchor='w', text='Tienes la %s.' % actualizacion.VERSION)
+            self.lbl_version.grid(row=0, column=1, sticky='e', padx=(0, 10))
+            if actualizacion.puede_instalarse(nueva):
+                self.btn_version = Boton(cuerpo, 'Actualizar', lambda: self.actualizar(nueva),
+                                         fondo=C['gris'])
+            else:
+                self.btn_version = Boton(cuerpo, 'Descargar',
+                                         lambda: webbrowser.open(nueva['url']), fondo=C['gris'])
+            self.btn_version.grid(row=0, column=2, sticky='e', padx=(0, 6), pady=5)
         except tk.TclError:
             pass
+
+    def actualizar(self, nueva):
+        """Baja la version nueva en otro hilo, se reemplaza y se vuelve a abrir."""
+        if self.invitados and not messagebox.askyesno(
+                'Actualizar',
+                'El programa se va a cerrar y abrir de nuevo, y la lista que tienes '
+                'abierta se descarta. Si ya la guardaste, no pasa nada.\n\n'
+                '¿Actualizar ahora?'):
+            return
+        self.btn_version.configure(state='disabled')
+        self.lbl_version.configure(text='Descargando…')
+        avance = queue.Queue()
+
+        def bajar():
+            try:
+                avance.put(('listo', actualizacion.descargar(
+                    nueva, lambda f: avance.put(('va', f)))))
+            except OSError as e:
+                avance.put(('error', e))
+
+        threading.Thread(target=bajar, daemon=True).start()
+        self.after(200, lambda: self._seguir_descarga(nueva, avance))
+
+    def _seguir_descarga(self, nueva, avance):
+        ultimo = None
+        try:
+            while True:
+                ultimo = avance.get_nowait()
+                if ultimo[0] != 'va':
+                    break
+                self.lbl_version.configure(text='Descargando… %d%%' % (ultimo[1] * 100))
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return
+        if not ultimo or ultimo[0] == 'va':
+            self.after(200, lambda: self._seguir_descarga(nueva, avance))
+            return
+        if ultimo[0] == 'listo':
+            try:
+                actualizacion.instalar_y_reabrir(ultimo[1])
+            except OSError as e:
+                ultimo = ('error', e)
+            else:
+                self.raiz.destroy()
+                return
+        # Algo fallo: queda la descarga a mano, que siempre funciona.
+        self.lbl_version.configure(text='No se pudo actualizar sola.')
+        self.btn_version.configure(state='normal', text='Descargar')
+        self.btn_version.orden = lambda: webbrowser.open(nueva['url'])
 
     # -------------------------------------------------------------------- tema
 
@@ -751,6 +806,7 @@ class Aplicacion(tk.Frame):
 
 
 def main():
+    actualizacion.limpiar_restos()
     tema.aplicar(tema.leer_preferencias().get('tema', 'oscuro'))
 
     raiz = tk.Tk()
@@ -771,6 +827,8 @@ def main():
     if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
         raiz.after(120, lambda: app.cargar_excel(sys.argv[1]))
 
+    # El .exe viejo puede tardar un momento en soltarse despues de actualizar.
+    raiz.after(8000, actualizacion.limpiar_restos)
     raiz.mainloop()
 
 
