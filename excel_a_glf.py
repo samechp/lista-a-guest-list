@@ -65,7 +65,12 @@ COLUMNAS = [
 # Palabras que aparecen dentro de un nombre pero no son una persona mas.
 RUIDO = {'sr', 'sra', 'srta', 'srita', 'dr', 'dra', 'don', 'dona', 'ing', 'familia',
          'flia', 'pareja', 'hijo', 'hija', 'hijos', 'esposo', 'esposa', 'invitado',
-         'acompanante', 'de', 'del', 'la', 'los', 'las', 'y', 'e', 'n', 'c'}
+         'acompanante', 'acompanantes', 'invitados', 'su', 'de', 'del', 'la', 'los', 'las',
+         'y', 'e', 'n', 'c'}
+
+# Pero si una parte del nombre es solo una de estas, es alguien sin nombre:
+# "Samuel y acompanante" son dos personas.
+SIN_NOMBRE = {'acompanante', 'invitado', 'pareja', 'esposo', 'esposa', 'hijo', 'hija'}
 
 CABEZA_MESA = re.compile(r'^\s*mesa\s*#?\s*(\d+)\b', re.I)
 CABEZA_SIN_NUMERO = re.compile(r'^\s*(novios?|mesa\s+principal|mesa\s+de\s+honor)\b', re.I)
@@ -128,10 +133,17 @@ def personas(texto):
     t = PARENTESIS.sub(' ', texto)                       # quita "(NIÑA)", "(inhedima egwu)"
     salida = []
     # re.I es indispensable: media lista viene en mayusculas ("X Y MAURICIO LAHORE").
-    for parte in re.split(r'\s*[&,;/]\s*|\s+\by\b\s+|\s+\be\b\s+', t, flags=re.I):
-        palabras = [w for w in normalizar(parte) if w not in RUIDO]
-        if palabras:
+    for parte in re.split(r'\s*[&,;/+]\s*|\s+\by\b\s+|\s+\be\b\s+', t, flags=re.I):
+        todas = normalizar(parte)
+        palabras = [w for w in todas if w not in RUIDO]
+        if len(palabras) == 1 and palabras[0].isdigit():
+            # "+2", "y 2 acompanantes": ese numero de personas sin nombre.
+            salida.extend([] for _ in range(int(palabras[0])))
+        elif palabras:
             salida.append(palabras)
+        elif SIN_NOMBRE.intersection(todas):
+            # Lista vacia: cuenta en el cupo pero no se cruza con ningun contacto.
+            salida.append([])
     return salida
 
 
