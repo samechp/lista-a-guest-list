@@ -39,7 +39,7 @@ F_SUB      = ('Segoe UI', 10)
 F_ETIQUETA = ('Segoe UI Semibold', 10)
 F_TEXTO    = ('Segoe UI', 10)
 F_CHICO    = ('Segoe UI', 9)
-F_NUMERO   = ('Segoe UI Semibold', 26)
+F_NUMERO   = ('Segoe UI Semibold', 20)
 
 # Lo que se sepa de la version nueva se guarda aqui: None = todavia no se pregunto,
 # False = se pregunto y no hay, dict = hay una. Asi rearmar la ventana al cambiar de
@@ -256,7 +256,7 @@ class Aplicacion(tk.Frame):
 
         # ---- encabezado
         cab = tk.Frame(self, bg=C['fondo'])
-        cab.grid(row=0, column=0, sticky='ew', pady=(20, 12), **R)
+        cab.grid(row=0, column=0, sticky='ew', pady=(14, 10), **R)
         cab.columnconfigure(0, weight=1)
         titulos = tk.Frame(cab, bg=C['fondo'])
         titulos.grid(row=0, column=0, sticky='w')
@@ -271,6 +271,7 @@ class Aplicacion(tk.Frame):
             derecha, bg=C['fondo'], fg=C['suave'], font=F_CHICO, cursor='hand2',
             text='☀  Modo claro' if C['nombre'] == 'oscuro' else '☾  Modo oscuro')
         self.lbl_tema.pack(anchor='e')
+        self.lbl_tema.bind('<Button-1>', lambda e: self.cambiar_tema())
         tk.Label(derecha, text='version %s' % actualizacion.VERSION, bg=C['fondo'],
                  fg=C['suave'], font=('Segoe UI', 8)).pack(anchor='e', pady=(2, 0))
         # Aviso de version nueva: se arma solo si la hay, debajo del titulo.
@@ -324,19 +325,17 @@ class Aplicacion(tk.Frame):
         d = caja2.cuerpo
         d.columnconfigure(1, weight=1)
 
+        # Todo en un renglon: en un portatil cada renglon le quita espacio a la lista.
         tk.Label(d, text='Nombre', bg=C['tarjeta'], fg=C['texto'], font=F_ETIQUETA).grid(
             row=0, column=0, sticky='w', padx=(8, 10), pady=(8, 0))
         self.var_evento = tk.StringVar()
-        Campo(d, self.var_evento, fondo=C['tarjeta']).grid(
-            row=0, column=1, sticky='ew', padx=(0, 8), pady=(6, 0))
-        tk.Label(d, bg=C['tarjeta'], fg=C['suave'], font=F_CHICO, anchor='w',
-                 text='Asi se va a llamar el evento dentro de Guest List.').grid(
-                     row=1, column=1, sticky='w', padx=6)
+        Campo(d, self.var_evento, tamano=11, fondo=C['tarjeta']).grid(
+            row=0, column=1, sticky='ew', pady=(6, 0))
 
         fecha = tk.Frame(d, bg=C['tarjeta'])
-        fecha.grid(row=2, column=0, columnspan=2, sticky='w', padx=8, pady=(8, 8))
+        fecha.grid(row=0, column=2, sticky='e', padx=8, pady=(6, 0))
         tk.Label(fecha, text='Fecha', bg=C['tarjeta'], fg=C['texto'],
-                 font=F_ETIQUETA).pack(side='left')
+                 font=F_ETIQUETA).pack(side='left', padx=(10, 0))
         self.var_fecha = tk.StringVar()
         Campo(fecha, self.var_fecha, ancho=11, tamano=10, fondo=C['tarjeta']).pack(
             side='left', padx=(10, 0))
@@ -344,12 +343,15 @@ class Aplicacion(tk.Frame):
                  font=F_TEXTO).pack(side='left', padx=8)
         self.var_hora = tk.StringVar(value='18:00')
         Campo(fecha, self.var_hora, ancho=6, tamano=10, fondo=C['tarjeta']).pack(side='left')
-        tk.Label(fecha, text='Opcional, como 2026-08-29. Vacia queda la fecha de hoy.',
-                 bg=C['tarjeta'], fg=C['suave'], font=F_CHICO).pack(side='left', padx=12)
+
+        tk.Label(d, bg=C['tarjeta'], fg=C['suave'], font=F_CHICO, anchor='w',
+                 text='Asi se va a llamar el evento dentro de Guest List. La fecha es '
+                      'opcional, como 2026-08-29; vacia queda la de hoy.').grid(
+                     row=1, column=1, columnspan=2, sticky='w', padx=6, pady=(2, 8))
 
         # ---- resultado
         zona = tk.Frame(self, bg=C['fondo'])
-        zona.grid(row=3, column=0, sticky='nsew', pady=(14, 0), **R)
+        zona.grid(row=3, column=0, sticky='nsew', pady=(10, 0), **R)
         zona.columnconfigure(0, weight=1)
         zona.rowconfigure(2, weight=1)
 
@@ -363,14 +365,14 @@ class Aplicacion(tk.Frame):
             t.grid(row=0, column=i, sticky='ew', padx=(0 if i == 0 else 10, 0))
             cifras.columnconfigure(i, weight=1)
             num = tk.Label(t.cuerpo, text='—', bg=C['tarjeta'], fg=C['texto'], font=F_NUMERO)
-            num.pack(anchor='w', padx=12, pady=(8, 0))
+            num.pack(side='left', padx=(14, 6), pady=4)
             tk.Label(t.cuerpo, text=rotulo, bg=C['tarjeta'], fg=C['suave'],
-                     font=F_CHICO).pack(anchor='w', padx=12, pady=(0, 8))
+                     font=F_TEXTO).pack(side='left', pady=(10, 4))
             self.cifras[clave] = num
 
         self.selector = Selector(zona, ['  Que revisar  ', '  Los invitados  '],
                                  self._cambiar_vista)
-        self.selector.grid(row=1, column=0, sticky='w', pady=(14, 8))
+        self.selector.grid(row=1, column=0, sticky='w', pady=(10, 6))
 
         panel = Tarjeta(zona, radio=14)
         panel.grid(row=2, column=0, sticky='nsew')
@@ -420,12 +422,16 @@ class Aplicacion(tk.Frame):
         self.tabla.configure(yscrollcommand=barra2.set)
         self.vista_tabla.grid_remove()
 
-        # ---- opciones
+        # ---- pie: opciones a la izquierda, guardar a la derecha, en un solo renglon
+        pie = tk.Frame(self, bg=C['fondo'])
+        pie.grid(row=4, column=0, sticky='ew', pady=(10, 14), **R)
+        pie.columnconfigure(1, weight=1)
+
         self.var_sin_mesa = tk.BooleanVar(value=False)
         self.var_todos = tk.BooleanVar(value=False)
         self.var_y = tk.BooleanVar(value=False)
-        opciones = tk.Frame(self, bg=C['fondo'])
-        opciones.grid(row=4, column=0, sticky='w', pady=(12, 0), **R)
+        opciones = tk.Frame(pie, bg=C['fondo'])
+        opciones.grid(row=0, column=0, sticky='w')
         for var, texto in ((self.var_sin_mesa, 'Agregar los que no estan en el plano'),
                            (self.var_todos, 'No filtrar por color'),
                            (self.var_y, 'Escribir "y" en vez de "&"')):
@@ -434,16 +440,13 @@ class Aplicacion(tk.Frame):
                            bg=C['fondo'], fg=C['suave'], font=F_CHICO,
                            activebackground=C['fondo'], activeforeground=C['texto'],
                            selectcolor=C['campo'], highlightthickness=0, bd=0,
-                           cursor='hand2').pack(side='left', padx=(0, 22))
+                           cursor='hand2').pack(side='left', padx=(0, 18))
 
-        # ---- pie
-        pie = tk.Frame(self, bg=C['fondo'])
-        pie.grid(row=5, column=0, sticky='ew', pady=(12, 18), **R)
-        self.btn_guardar = Boton(pie, 'Guardar el archivo…', self.guardar)
-        self.btn_guardar.pack(side='left')
-        self.btn_guardar.configure(state='disabled')
         self.lbl_estado = tk.Label(pie, text='', bg=C['fondo'], fg=C['suave'], font=F_CHICO)
-        self.lbl_estado.pack(side='left', padx=14)
+        self.lbl_estado.grid(row=0, column=1, sticky='e', padx=12)
+        self.btn_guardar = Boton(pie, 'Guardar el archivo…', self.guardar)
+        self.btn_guardar.grid(row=0, column=2, sticky='e')
+        self.btn_guardar.configure(state='disabled')
 
         self._vaciar('Elige un Excel para empezar.')
 
@@ -811,7 +814,7 @@ def main():
 
     raiz = tk.Tk()
     raiz.title(TITULO)
-    raiz.minsize(840, 660)
+    raiz.minsize(760, 560)
     try:
         # La referencia se guarda en la ventana o el recolector se lleva la imagen.
         raiz._icono = tk.PhotoImage(data=icono.PNG)

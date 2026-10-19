@@ -8,6 +8,7 @@ construyen, asi que al cambiar de tema la ventana se vuelve a armar entera.
 
 import os
 import sys
+import re
 import json
 import ctypes
 
@@ -91,11 +92,35 @@ def barra_de_titulo_oscura(raiz, oscura):
         pass
 
 
+def geometria_que_cabe(raiz, geometria):
+    """Si la ventana no cabe en la pantalla, una geometria que si. Si cabe, None.
+
+    Pasa con una pantalla pequena, o al cambiar a una despues de haber usado una
+    grande: Windows la abre igual y queda cortada por la derecha o por abajo.
+    """
+    m = re.match(r'(\d+)x(\d+)(?:([+-]-?\d+)([+-]-?\d+))?', geometria or '')
+    if not m:
+        return None
+    ancho, alto = int(m.group(1)), int(m.group(2))
+    x, y = int(m.group(3) or 0), int(m.group(4) or 0)
+    # Lo que se lleva la barra de tareas y la barra de titulo de la ventana.
+    max_ancho = raiz.winfo_screenwidth() - 16
+    max_alto = raiz.winfo_screenheight() - 90
+    if (ancho <= max_ancho and alto <= max_alto and 0 <= x <= max_ancho - ancho + 8
+            and 0 <= y <= max_alto - alto + 8):
+        return None
+    ancho, alto = min(ancho, max_ancho), min(alto, max_alto)
+    return '%dx%d+%d+%d' % (ancho, alto, (max_ancho - ancho) // 2, 8)
+
+
 def recordar_ventana(raiz, geometria_por_defecto):
     """Abre la ventana como quedo la ultima vez y guarda el tamano al cerrarla."""
     guardadas = leer_preferencias()
-    raiz.geometry(guardadas.get('geometria') or geometria_por_defecto)
-    if guardadas.get('maximizada'):
+    geometria = guardadas.get('geometria') or geometria_por_defecto
+    cabe = geometria_que_cabe(raiz, geometria)
+    raiz.geometry(cabe or geometria)
+    # En un portatil el tamano por defecto no cabe: mejor que abra maximizada.
+    if guardadas.get('maximizada') or (cabe and not guardadas.get('geometria')):
         raiz.state('zoomed')
 
     # Solo interesa el tamano de la ventana suelta: el de la maximizada lo pone

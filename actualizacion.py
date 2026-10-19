@@ -23,7 +23,7 @@ import sys
 import urllib.error
 import urllib.request
 
-VERSION = '1.3'
+VERSION = '1.4'
 
 REPOSITORIO = 'samechp/lista-a-guest-list'
 API_ULTIMO = 'https://api.github.com/repos/%s/releases/latest' % REPOSITORIO
